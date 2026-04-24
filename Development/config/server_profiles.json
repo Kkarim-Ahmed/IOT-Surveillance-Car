@@ -1,0 +1,13 @@
+{
+  "_comment": "Broker profiles — select 'local' for LAN testing, 'cloud' for WAN/internet access",
+  "local": {
+    "host": "192.168.1.100",
+    "port": 1883,
+    "description": "Local Mosquitto broker on the same network as the Pi"
+  },
+  "cloud": {
+    "host": "broker.hivemq.com",
+    "port": 1883,
+    "description": "HiveMQ public cloud broker — no credentials required"
+  }
+}

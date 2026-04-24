@@ -1,0 +1,7 @@
+{
+  "_comment": "MQTT topic map — all components read from here so topics are changed in one place",
+  "motor"   : "dev/motor",
+  "led"     : "dev/led",
+  "commands": "dev/commands",
+  "status"  : "dev/status"
+}
