@@ -1,0 +1,22 @@
+{
+  "_comment": "MQTT Client Configuration for Raspberry Pi - HiveMQ Cloud",
+  "local_broker": {
+    "host": "localhost",
+    "port": 1883
+  },
+  "cloud_broker": {
+    "host": "78ed3eab06c348d0948ef7681cf4a377.s1.eu.hivemq.cloud",
+    "port": 8883
+  },
+  "credentials": {
+    "username": "mohamed",
+    "password": "P@ssw0rd"
+  },
+  "client_id": "surveillance-car-pi",
+  "topics": {
+    "motor": "dev/motor",
+    "led": "dev/led",
+    "commands": "dev/commands",
+    "status": "dev/status"
+  }
+}
