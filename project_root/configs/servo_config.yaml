@@ -1,0 +1,51 @@
+# Servo Configuration
+# Defines angle limits, calibration, and movement parameters
+
+# Pan Servo (Horizontal)
+pan:
+  angle_limits:
+    min: -90       # Degrees
+    max: 90        # Degrees
+    center: 0      # Degrees
+  
+  calibration:
+    offset: 0      # Calibration offset in degrees
+    inverted: false
+  
+  presets:
+    center: 0
+    left: -45
+    right: 45
+    far_left: -90
+    far_right: 90
+
+# Tilt Servo (Vertical)
+tilt:
+  angle_limits:
+    min: -45       # Degrees
+    max: 45        # Degrees
+    center: 0      # Degrees
+  
+  calibration:
+    offset: 0      # Calibration offset in degrees
+    inverted: false
+  
+  presets:
+    center: 0
+    up: 30
+    down: -30
+    max_up: 45
+    max_down: -45
+
+# Movement Settings
+movement:
+  smooth_enabled: true
+  step_size: 5           # Degrees per step
+  step_delay: 0.02       # Seconds between steps
+  acceleration: true     # Enable acceleration/deceleration
+
+# Safety Settings
+safety:
+  max_speed: 180         # Degrees per second
+  timeout: 5             # Seconds - max time for movement
+  verify_position: false # Verify servo reached target (requires feedback)

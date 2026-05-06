@@ -1,0 +1,68 @@
+# GPIO Pin Configuration
+# All GPIO pin numbers use BCM (Broadcom) numbering
+# DO NOT modify pin numbers without checking hardware connections
+
+board_mode: BCM  # BCM or BOARD
+warnings_enabled: true
+
+# Reserved pins - DO NOT USE
+reserved_pins:
+  - 0   # I2C ID EEPROM
+  - 1   # I2C ID EEPROM
+  - 2   # I2C SDA
+  - 3   # I2C SCL
+  - 14  # UART TX
+  - 15  # UART RX
+
+# L298N Motor Driver Pins
+motor:
+  left_motor:
+    enable: 12      # PWM capable - Speed control
+    input1: 23      # Direction control
+    input2: 24      # Direction control
+  
+  right_motor:
+    enable: 13      # PWM capable - Speed control
+    input3: 27      # Direction control
+    input4: 22      # Direction control
+
+# Servo Motor Pins (PWM capable)
+servo:
+  pan:
+    pin: 17         # Horizontal servo
+    pwm_capable: true
+  
+  tilt:
+    pin: 18         # Vertical servo
+    pwm_capable: true
+
+# RGB LED Pins (PWM capable for brightness)
+led:
+  red: 16
+  green: 20
+  blue: 21
+
+# HC-SR04 Ultrasonic Sensor
+ultrasonic:
+  trigger: 5
+  echo: 6
+
+# Emergency Stop Button (optional)
+emergency_button:
+  pin: 26
+  pull_up: true
+  active_low: true
+
+# Camera (uses CSI interface, not GPIO)
+camera:
+  interface: CSI
+  device_id: 0
+
+# Power and Ground Notes
+power_notes:
+  gpio_max_current_per_pin: 16  # mA
+  gpio_total_max_current: 50    # mA
+  logic_level: 3.3              # V
+  external_power_required:
+    - motors
+    - servos

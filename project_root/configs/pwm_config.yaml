@@ -1,0 +1,45 @@
+# PWM Configuration
+# Defines PWM frequencies and duty cycle ranges for all PWM-capable components
+
+# Motor PWM Configuration
+motor:
+  frequency: 1000  # Hz - Standard motor control frequency
+  duty_cycle:
+    min: 0         # Minimum duty cycle (%)
+    max: 100       # Maximum duty cycle (%)
+    default: 70    # Default speed (%)
+  
+  acceleration:
+    rate: 5        # Duty cycle increase per step (%)
+    delay: 0.05    # Seconds between steps
+  
+  deceleration:
+    rate: 10       # Duty cycle decrease per step (%)
+    delay: 0.05    # Seconds between steps
+
+# Servo PWM Configuration
+servo:
+  frequency: 50    # Hz - Standard servo frequency (20ms period)
+  
+  pulse_width:     # Microseconds
+    min: 500       # Minimum pulse width
+    max: 2500      # Maximum pulse width
+    center: 1500   # Center position pulse width
+  
+  movement:
+    step_size: 5   # Degrees per step for smooth movement
+    step_delay: 0.02  # Seconds between steps
+
+# LED PWM Configuration
+led:
+  frequency: 1000  # Hz - High frequency for flicker-free dimming
+  
+  brightness:
+    min: 0         # Minimum brightness (%)
+    max: 100       # Maximum brightness (%)
+    default: 50    # Default brightness (%)
+  
+  effects:
+    fade_speed: 0.05      # Seconds per step
+    blink_interval: 0.5   # Seconds
+    rainbow_speed: 0.05   # Seconds per color step

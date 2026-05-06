@@ -1,0 +1,23 @@
+# Core Dependencies
+python>=3.8
+
+# Hardware Control
+RPi.GPIO>=0.7.1
+
+# Camera & Computer Vision
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# Configuration
+pyyaml>=6.0.1
+
+# Testing
+pytest>=7.4.3
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# Development
+black>=23.11.0
+flake8>=6.1.0
+mypy>=1.7.0

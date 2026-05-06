@@ -1,0 +1,98 @@
+# Safety System Configuration
+# Defines emergency triggers, thresholds, and safety behaviors
+
+# Emergency Stop Configuration
+emergency_stop:
+  enabled: true
+  auto_recovery: false        # Require manual reset
+  recovery_delay: 5           # Seconds before auto-recovery (if enabled)
+  
+  triggers:
+    - obstacle_detected
+    - communication_timeout
+    - invalid_gpio_state
+    - manual_button
+    - watchdog_timeout
+    - hardware_error
+
+# Obstacle Detection
+obstacle_detection:
+  enabled: true
+  emergency_distance: 15      # cm - trigger emergency stop
+  warning_distance: 30        # cm - warning threshold
+  auto_stop: true             # Automatically stop on obstacle
+  continuous_monitoring: true
+
+# Motor Safety
+motor:
+  speed_limits:
+    min: 30                   # Minimum speed (%)
+    max: 100                  # Maximum speed (%)
+    safe_mode: 50             # Safe mode speed limit (%)
+  
+  direction_change:
+    require_stop: true        # Must stop before changing direction
+    delay: 0.2                # Seconds delay after stop
+  
+  acceleration_limit: 10      # Max acceleration per step (%)
+  emergency_stop_time: 0.1    # Seconds to full stop
+
+# Servo Safety
+servo:
+  angle_validation: true      # Validate angles before movement
+  soft_limits: true           # Stop before hard limits
+  soft_limit_margin: 5        # Degrees from hard limit
+  movement_timeout: 5         # Seconds max for any movement
+
+# Sensor Safety
+ultrasonic:
+  measurement_timeout: 0.1    # Seconds
+  max_retries: 3              # Retry failed measurements
+  noise_threshold: 5          # cm - ignore changes smaller than this
+  valid_range:
+    min: 2                    # cm
+    max: 400                  # cm
+
+# Camera Safety
+camera:
+  capture_timeout: 2          # Seconds
+  max_buffer_size: 10         # Frames
+  auto_restart: true          # Restart on failure
+  restart_delay: 5            # Seconds
+
+# Watchdog Configuration
+watchdog:
+  enabled: true
+  check_interval: 1           # Seconds
+  timeout: 10                 # Seconds - trigger emergency if no heartbeat
+  
+  monitored_components:
+    - motor
+    - servo
+    - camera
+    - ultrasonic
+    - gpio
+
+# GPIO Safety
+gpio:
+  cleanup_on_exit: true
+  verify_pins: true           # Verify pins before use
+  protected_pins:             # Additional protected pins
+    - 0
+    - 1
+    - 2
+    - 3
+    - 14
+    - 15
+  
+  pwm_safety:
+    max_duty_cycle: 100
+    min_duty_cycle: 0
+    validate_frequency: true
+
+# Logging
+logging:
+  log_emergency_events: true
+  log_warnings: true
+  log_hardware_state: true
+  emergency_log_file: logs/emergency.log
