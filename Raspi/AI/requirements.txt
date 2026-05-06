@@ -1,0 +1,25 @@
+# Raspi/AI — Raspberry Pi 4 face recognition
+# pip install -r requirements.txt
+
+opencv-python>=4.8.0
+numpy>=1.24.0
+mediapipe>=0.10.9        # TFLite face detection (built-in BlazeFace model)
+Pillow>=10.0.0           # tkinter image display
+psutil>=5.9.0            # CPU/RAM stats in GUI
+
+# Tiny-model inference (choose one):
+# On Raspberry Pi:
+#   pip install tflite-runtime
+# On dev machine (Windows/Mac):
+#   pip install tensorflow  (includes tf.lite)
+# We auto-detect which is available at runtime.
+
+# Fallback recognizer if MobileFaceNet TFLite not yet downloaded:
+insightface>=0.7.3
+onnxruntime>=1.16.0
+
+# Raspberry Pi camera (RPi only):
+# picamera2>=0.3.0
+
+# Servo control (RPi + PCA9685 only):
+# adafruit-circuitpython-servokit>=1.3.11
