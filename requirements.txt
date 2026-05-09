@@ -1,0 +1,48 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+# Versions below are compatible with Python 3.13 on Raspberry Pi (aarch64)
+# PiWheels provides pre-built binaries for most of these — no source build needed.
+
+numpy>=1.26.4
+Pillow>=10.4.0
+
+# opencv-python has no py3.13 wheel on piwheels yet — use headless variant:
+opencv-python-headless>=4.9.0.80
+
+# ── Face detection ────────────────────────────────────────────────────────────
+# MediaPipe: official wheels don't support py3.13/aarch64 yet.
+# Use the community-maintained fork:
+#   pip install mediapipe-rpi4   (Raspberry Pi 4, aarch64)
+# OR install from source (slow):
+#   pip install mediapipe
+# Uncomment ONE of these depending on your Pi model:
+# mediapipe-rpi4>=0.10.0
+# mediapipe>=0.10.14
+
+# YOLOv8-nano via Ultralytics (optional — heavier but more accurate)
+ultralytics>=8.2.0
+
+# ── TFLite runtime ────────────────────────────────────────────────────────────
+# Pre-built for Raspberry Pi (aarch64, Python 3.13):
+#   pip install tflite-runtime
+# tflite-runtime  # Uncomment if using BlazeFace .tflite model directly
+
+# ── Face recognition (dlib-based) ─────────────────────────────────────────────
+# dlib must be compiled from source on Pi — takes 15–30 min.
+# Prerequisites (run ONCE on the Pi before pip install):
+#   sudo apt-get install -y cmake libopenblas-dev liblapack-dev libx11-dev
+# Then:
+#   pip install dlib
+#   pip install face-recognition
+dlib>=19.24.4
+face-recognition>=1.3.0
+
+# ── Servo control (Raspberry Pi + PCA9685 only) ───────────────────────────────
+adafruit-circuitpython-servokit>=1.3.11
+adafruit-circuitpython-pca9685>=3.4.11
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+scipy>=1.13.0
+imutils>=0.5.4
+
+# ── Optional tiny LLM runtime (install only if you use Tiny LLM in GUI) ──────
+# llama-cpp-python>=0.2.90
