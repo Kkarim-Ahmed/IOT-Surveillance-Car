@@ -98,7 +98,8 @@ class CustomMQTTBroker:
     Implements MQTT v3.1.1 protocol from scratch
     """
     
-    def __init__(self, host: str = "0.0.0.0", port: int = 1883):
+    def __init__(self, host: str = "0.0.0.0", port: int = 1883, 
+                 require_auth: bool = True, username: str = None, password: str = None):
         self.host = host
         self.port = port
         self.clients: Dict[str, MQTTClient] = {}
@@ -106,12 +107,18 @@ class CustomMQTTBroker:
         self.server = None
         self.running = False
         
+        # Authentication
+        self.require_auth = require_auth
+        self.username = username or "admin"
+        self.password = password or "surveillance2024"
+        
         # Statistics
         self.stats = {
             "clients_connected": 0,
             "messages_published": 0,
             "messages_delivered": 0,
-            "subscriptions": 0
+            "subscriptions": 0,
+            "auth_failures": 0
         }
     
     async def start(self):
@@ -171,13 +178,25 @@ class CustomMQTTBroker:
                 return
             
             # Parse CONNECT packet
-            client_id, clean_session, keepalive = self.parse_connect(connect_packet)
+            client_id, clean_session, keepalive, username, password = self.parse_connect(connect_packet)
             
             if not client_id:
                 # Generate client ID if not provided
                 client_id = f"auto_{int(time.time() * 1000)}"
             
-            logger.info(f"Client {client_id} connecting (clean_session={clean_session})")
+            # Authenticate
+            if self.require_auth:
+                if not self.authenticate(username, password):
+                    logger.warning(f"Authentication failed for {client_id} (user: {username})")
+                    self.stats["auth_failures"] += 1
+                    connack = self.build_connack(MQTTConnectReturnCode.BAD_CREDENTIALS)
+                    writer.write(connack)
+                    await writer.drain()
+                    writer.close()
+                    await writer.wait_closed()
+                    return
+            
+            logger.info(f"Client {client_id} connecting (clean_session={clean_session}, user={username})")
             
             # Check if client already connected
             if client_id in self.clients:
@@ -282,7 +301,7 @@ class CustomMQTTBroker:
         
         return bytes(result)
     
-    def parse_connect(self, packet: bytes) -> Tuple[str, bool, int]:
+    def parse_connect(self, packet: bytes) -> Tuple[str, bool, int, Optional[str], Optional[str]]:
         """Parse CONNECT packet"""
         # Skip fixed header
         pos = 1
@@ -309,6 +328,8 @@ class CustomMQTTBroker:
         pos += 1
         
         clean_session = bool(connect_flags & 0x02)
+        has_username = bool(connect_flags & 0x80)
+        has_password = bool(connect_flags & 0x40)
         
         # Keep alive
         keepalive = struct.unpack("!H", packet[pos:pos+2])[0]
@@ -320,8 +341,32 @@ class CustomMQTTBroker:
         
         # Client ID
         client_id = packet[pos:pos+client_id_len].decode('utf-8') if client_id_len > 0 else ""
+        pos += client_id_len
         
-        return client_id, clean_session, keepalive
+        # Username
+        username = None
+        if has_username and pos < len(packet):
+            username_len = struct.unpack("!H", packet[pos:pos+2])[0]
+            pos += 2
+            username = packet[pos:pos+username_len].decode('utf-8')
+            pos += username_len
+        
+        # Password
+        password = None
+        if has_password and pos < len(packet):
+            password_len = struct.unpack("!H", packet[pos:pos+2])[0]
+            pos += 2
+            password = packet[pos:pos+password_len].decode('utf-8')
+            pos += password_len
+        
+        return client_id, clean_session, keepalive, username, password
+    
+    def authenticate(self, username: Optional[str], password: Optional[str]) -> bool:
+        """Authenticate client credentials"""
+        if not self.require_auth:
+            return True
+        
+        return username == self.username and password == self.password
     
     def build_connack(self, return_code: MQTTConnectReturnCode) -> bytes:
         """Build CONNACK packet"""
@@ -602,7 +647,17 @@ class CustomMQTTBroker:
             "messages_published": self.stats["messages_published"],
             "messages_delivered": self.stats["messages_delivered"],
             "subscriptions": self.stats["subscriptions"],
-            "retained_messages": len(self.retained_messages)
+            "retained_messages": len(self.retained_messages),
+            "auth_failures": self.stats["auth_failures"]
+        }
+    
+    def get_connection_info(self) -> dict:
+        """Get connection information for clients"""
+        return {
+            "broker_url": f"mqtt://{self.host}:{self.port}",
+            "username": self.username,
+            "password": self.password,
+            "require_auth": self.require_auth
         }
 
 

@@ -17,8 +17,9 @@ class MQTTDeviceController:
     Handles motor control, status updates, and command processing
     """
     
-    def __init__(self, broker_host: str, broker_port: int, client_id: str):
-        self.connection = MQTTConnectionManager(broker_host, broker_port, client_id)
+    def __init__(self, broker_host: str, broker_port: int, client_id: str,
+                 username: str = None, password: str = None):
+        self.connection = MQTTConnectionManager(broker_host, broker_port, client_id, username, password)
         self.command_handlers = {}
         self.status_callback = None
         

@@ -21,13 +21,16 @@ logger = logging.getLogger(__name__)
 class MQTTConnectionManager:
     """Manages MQTT broker connection and message handling"""
     
-    def __init__(self, broker_host: str, broker_port: int, client_id: str):
+    def __init__(self, broker_host: str, broker_port: int, client_id: str, 
+                 username: str = None, password: str = None):
         if not MQTT_AVAILABLE:
             raise RuntimeError("paho-mqtt library is required")
         
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.client_id = client_id
+        self.username = username
+        self.password = password
         self.client = None
         self.connected = False
         self.message_callback = None
@@ -46,6 +49,11 @@ class MQTTConnectionManager:
             
             # Create MQTT client
             self.client = mqtt.Client(client_id=self.client_id, protocol=mqtt.MQTTv311)
+            
+            # Set username/password if provided
+            if self.username and self.password:
+                self.client.username_pw_set(self.username, self.password)
+                logger.info(f"Using authentication: username={self.username}")
             
             # Set callbacks
             self.client.on_connect = self._on_connect

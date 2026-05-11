@@ -24,6 +24,10 @@ MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
 MQTT_QOS = int(os.getenv("MQTT_QOS", "1"))
 MQTT_CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "raspi_surveillance_car")
 
+# MQTT Authentication
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "admin")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "surveillance2024")
+
 # MQTT Topics
 MQTT_TOPIC_MOTOR = "dev/motor"
 MQTT_TOPIC_STATUS = "dev/status"

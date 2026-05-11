@@ -45,7 +45,10 @@ class SurveillanceCarSystem:
             logger.info("Starting Custom MQTT Broker...")
             self.mqtt_broker = CustomMQTTBroker(
                 host=config.MQTT_BROKER_HOST,
-                port=config.MQTT_BROKER_PORT
+                port=config.MQTT_BROKER_PORT,
+                require_auth=True,
+                username=config.MQTT_USERNAME,
+                password=config.MQTT_PASSWORD
             )
             
             # Start broker in background
@@ -61,7 +64,9 @@ class SurveillanceCarSystem:
             self.mqtt_controller = MQTTDeviceController(
                 broker_host=config.MQTT_BROKER_HOST,
                 broker_port=config.MQTT_BROKER_PORT,
-                client_id=config.MQTT_CLIENT_ID
+                client_id=config.MQTT_CLIENT_ID,
+                username=config.MQTT_USERNAME,
+                password=config.MQTT_PASSWORD
             )
             
             # Connect to MQTT broker
@@ -108,7 +113,19 @@ class SurveillanceCarSystem:
             self.running = True
             logger.info("\n" + "="*70)
             logger.info("🚀 SYSTEM READY - All services running")
-            logger.info("="*70 + "\n")
+            logger.info("="*70)
+            
+            # Display connection information
+            if self.mqtt_broker:
+                conn_info = self.mqtt_broker.get_connection_info()
+                logger.info("\n" + "="*70)
+                logger.info("📋 MQTT BROKER CONNECTION INFO")
+                logger.info("="*70)
+                logger.info(f"Local URL: mqtt://{config.MQTT_BROKER_HOST}:{config.MQTT_BROKER_PORT}")
+                logger.info(f"Username: {conn_info['username']}")
+                logger.info(f"Password: {conn_info['password']}")
+                logger.info(f"Authentication: {'Required' if conn_info['require_auth'] else 'Optional'}")
+                logger.info("="*70 + "\n")
             
             # Publish startup event
             self.mqtt_controller.publish_event(
