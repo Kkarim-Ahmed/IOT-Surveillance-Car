@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raspberry Pi Surveillance Car Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 8px 20px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.2);
+            font-size: 0.9em;
+        }
+        
+        .status.connected {
+            background: #10b981;
+        }
+        
+        .status.disconnected {
+            background: #ef4444;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .video-section {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        #videoCanvas {
+            width: 100%;
+            max-width: 640px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            background: #000;
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            max-width: 400px;
+            margin: 30px auto;
+        }
+        
+        .control-btn {
+            padding: 20px;
+            font-size: 1.2em;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s;
+            font-weight: bold;
+        }
+        
+        .control-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        
+        .control-btn:active {
+            transform: translateY(0);
+        }
+        
+        .control-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .control-btn.stop {
+            background: #ef4444;
+            grid-column: 2;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .stat-card {
+            background: #f3f4f6;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .stat-card h3 {
+            color: #6b7280;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .log {
+            margin-top: 30px;
+            background: #1f2937;
+            color: #10b981;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+        }
+        
+        .config {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f9fafb;
+            border-radius: 10px;
+        }
+        
+        .config input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 2px solid #e5e7eb;
+            border-radius: 5px;
+            font-size: 1em;
+        }
+        
+        .config button {
+            width: 100%;
+            padding: 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 1em;
+            cursor: pointer;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚗 Surveillance Car Control</h1>
+            <div class="status disconnected" id="status">Disconnected</div>
+        </div>
+        
+        <div class="content">
+            <!-- Configuration -->
+            <div class="config">
+                <h2>Connection Settings</h2>
+                <input type="text" id="wsUrl" placeholder="WebSocket URL (wss://your-ngrok-url.ngrok.io)" value="ws://localhost:8765">
+                <button onclick="connect()">Connect</button>
+            </div>
+            
+            <!-- Video Stream -->
+            <div class="video-section">
+                <h2>Live Video Feed</h2>
+                <canvas id="videoCanvas" width="640" height="480"></canvas>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls">
+                <div></div>
+                <button class="control-btn" onclick="sendCommand('forward')" id="btnForward">⬆️ Forward</button>
+                <div></div>
+                
+                <button class="control-btn" onclick="sendCommand('left')" id="btnLeft">⬅️ Left</button>
+                <button class="control-btn stop" onclick="sendCommand('stop')" id="btnStop">⏹️ Stop</button>
+                <button class="control-btn" onclick="sendCommand('right')" id="btnRight">➡️ Right</button>
+                
+                <div></div>
+                <button class="control-btn" onclick="sendCommand('backward')" id="btnBackward">⬇️ Backward</button>
+                <div></div>
+            </div>
+            
+            <!-- Statistics -->
+            <div class="stats">
+                <div class="stat-card">
+                    <h3>Video FPS</h3>
+                    <div class="value" id="statFps">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Frames Received</h3>
+                    <div class="value" id="statFrames">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Audio Chunks</h3>
+                    <div class="value" id="statAudio">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Latency</h3>
+                    <div class="value" id="statLatency">0ms</div>
+                </div>
+            </div>
+            
+            <!-- Log -->
+            <div class="log" id="log">
+                <div class="log-entry">System ready. Enter WebSocket URL and click Connect.</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let ws = null;
+        let connected = false;
+        let stats = {
+            frames: 0,
+            audio: 0,
+            fps: 0,
+            lastFpsUpdate: Date.now()
+        };
+        
+        const canvas = document.getElementById('videoCanvas');
+        const ctx = canvas.getContext('2d');
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(isConnected) {
+            connected = isConnected;
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = isConnected ? 'Connected' : 'Disconnected';
+            statusDiv.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
+            
+            // Enable/disable controls
+            const buttons = document.querySelectorAll('.control-btn');
+            buttons.forEach(btn => btn.disabled = !isConnected);
+        }
+        
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            
+            if (!url) {
+                alert('Please enter WebSocket URL');
+                return;
+            }
+            
+            log(`Connecting to ${url}...`);
+            
+            try {
+                ws = new WebSocket(url);
+                ws.binaryType = 'arraybuffer';
+                
+                ws.onopen = () => {
+                    log('Connected successfully!');
+                    updateStatus(true);
+                };
+                
+                ws.onclose = () => {
+                    log('Connection closed');
+                    updateStatus(false);
+                };
+                
+                ws.onerror = (error) => {
+                    log('Connection error: ' + error);
+                    updateStatus(false);
+                };
+                
+                ws.onmessage = handleMessage;
+                
+            } catch (error) {
+                log('Failed to connect: ' + error);
+                updateStatus(false);
+            }
+        }
+        
+        function handleMessage(event) {
+            const data = new Uint8Array(event.data);
+            const tag = data[0];
+            const payload = data.slice(1);
+            
+            if (tag === 0x00) {
+                // JSON message
+                const json = JSON.parse(new TextDecoder().decode(payload));
+                handleJsonMessage(json);
+            } else if (tag === 0x01) {
+                // Video frame
+                handleVideoFrame(payload);
+            } else if (tag === 0x02) {
+                // Audio chunk
+                handleAudioChunk(payload);
+            }
+        }
+        
+        function handleJsonMessage(json) {
+            log(`Message: ${json.type}`);
+            
+            if (json.type === 'welcome') {
+                log(`Video: ${json.video_enabled}, Audio: ${json.audio_enabled}`);
+            } else if (json.type === 'mqtt_message') {
+                log(`MQTT: ${json.topic} -> ${json.payload}`);
+            } else if (json.type === 'stats') {
+                updateStats(json);
+            }
+        }
+        
+        function handleVideoFrame(payload) {
+            stats.frames++;
+            
+            // Update FPS
+            const now = Date.now();
+            if (now - stats.lastFpsUpdate >= 1000) {
+                stats.fps = stats.frames;
+                stats.frames = 0;
+                stats.lastFpsUpdate = now;
+                document.getElementById('statFps').textContent = stats.fps;
+            }
+            
+            // Display frame
+            const blob = new Blob([payload], {type: 'image/jpeg'});
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                URL.revokeObjectURL(url);
+            };
+            
+            img.src = url;
+            
+            document.getElementById('statFrames').textContent = stats.frames;
+        }
+        
+        function handleAudioChunk(payload) {
+            stats.audio++;
+            document.getElementById('statAudio').textContent = stats.audio;
+            
+            // Play audio (PCM 16-bit mono 16kHz)
+            try {
+                const audioBuffer = audioCtx.createBuffer(1, payload.length / 2, 16000);
+                const channelData = audioBuffer.getChannelData(0);
+                
+                const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+                for (let i = 0; i < payload.length / 2; i++) {
+                    channelData[i] = view.getInt16(i * 2, true) / 32768.0;
+                }
+                
+                const source = audioCtx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioCtx.destination);
+                source.start();
+            } catch (error) {
+                console.error('Audio playback error:', error);
+            }
+        }
+        
+        function updateStats(json) {
+            if (json.video) {
+                document.getElementById('statFps').textContent = json.video.fps || 0;
+            }
+        }
+        
+        function sendCommand(direction) {
+            if (!connected || !ws) {
+                log('Not connected!');
+                return;
+            }
+            
+            const message = {
+                type: 'mqtt_publish',
+                topic: 'dev/motor',
+                payload: JSON.stringify({command: direction})
+            };
+            
+            ws.send(JSON.stringify(message));
+            log(`Command sent: ${direction}`);
+        }
+        
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (!connected) return;
+            
+            switch(e.key) {
+                case 'ArrowUp':
+                case 'w':
+                    sendCommand('forward');
+                    break;
+                case 'ArrowDown':
+                case 's':
+                    sendCommand('backward');
+                    break;
+                case 'ArrowLeft':
+                case 'a':
+                    sendCommand('left');
+                    break;
+                case 'ArrowRight':
+                case 'd':
+                    sendCommand('right');
+                    break;
+                case ' ':
+                    sendCommand('stop');
+                    e.preventDefault();
+                    break;
+            }
+        });
+        
+        // Initialize
+        updateStatus(false);
+    </script>
+</body>
+</html>

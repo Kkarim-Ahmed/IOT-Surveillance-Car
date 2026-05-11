@@ -1,0 +1,34 @@
+# Raspberry Pi Surveillance Car - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# MQTT Client Library
+paho-mqtt==1.6.1
+
+# WebSocket Server
+websockets==12.0
+
+# Video Processing
+opencv-python==4.8.1.78
+
+# Audio Processing
+PyAudio==0.2.14
+
+# Ngrok Integration
+pyngrok==7.0.1
+
+# HTTP Client (for ngrok API)
+aiohttp==3.9.1
+
+# Async Support
+asyncio-mqtt==0.16.1
+
+# System Utilities
+psutil==5.9.6
+
+# Optional: GPIO Control (Raspberry Pi specific)
+# RPi.GPIO==0.7.1
+# gpiozero==2.0
+
+# Optional: Motor Control
+# adafruit-circuitpython-motorkit==1.6.12
+# adafruit-circuitpython-servokit==1.3.15

@@ -1,0 +1,489 @@
+RASPBERRY PI SURVEILLANCE CAR - SYSTEM DIAGRAMS
+================================================
+
+TABLE OF CONTENTS
+-----------------
+1. High-Level Architecture
+2. Component Interaction
+3. Data Flow - Video Streaming
+4. Data Flow - Audio Streaming
+5. Data Flow - MQTT to WebSocket
+6. Data Flow - WebSocket to MQTT
+7. Network Topology
+8. Async Architecture
+9. Thread Model
+10. Deployment Architecture
+
+
+═══════════════════════════════════════════════════════════════════════════════
+1. HIGH-LEVEL ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+                        ┌─────────────────────────────────┐
+                        │         WAN (Internet)          │
+                        │                                 │
+                        │  ┌──────────┐   ┌──────────┐  │
+                        │  │   Web    │   │  Mobile  │  │
+                        │  │ Dashboard│   │  Client  │  │
+                        │  └────┬─────┘   └────┬─────┘  │
+                        │       │              │         │
+                        └───────┼──────────────┼─────────┘
+                                │              │
+                                │   Ngrok      │
+                                │   Tunnels    │
+                                │              │
+        ┌───────────────────────┼──────────────┼───────────────────────┐
+        │                       │              │                       │
+        │  ┌────────────────────▼──────────────▼────────────────────┐ │
+        │  │              Ngrok Manager                             │ │
+        │  │  (Creates and manages WAN tunnels)                     │ │
+        │  └────────────────────┬──────────────┬────────────────────┘ │
+        │                       │              │                       │
+        │  ┌────────────────────▼──────┐  ┌───▼──────────────────┐   │
+        │  │   WebSocket Server        │  │   MQTT Broker        │   │
+        │  │   (Port 8765)             │◄─┤   (Mosquitto)        │   │
+        │  │                           │  │   (Port 1883)        │   │
+        │  │  - Client connections     │  │                      │   │
+        │  │  - Video/Audio broadcast  │  │  - Pub/Sub           │   │
+        │  │  - MQTT bridge            │  │  - QoS 0/1           │   │
+        │  └────────┬──────────────────┘  └───┬──────────────────┘   │
+        │           │                          │                       │
+        │  ┌────────▼──────────┐      ┌───────▼──────────┐           │
+        │  │  Video Handler    │      │  MQTT Controller │           │
+        │  │  - OpenCV capture │      │  - Command route │           │
+        │  │  - JPEG encode    │      │  - Status report │           │
+        │  └────────┬──────────┘      └───────┬──────────┘           │
+        │           │                          │                       │
+        │  ┌────────▼──────────┐      ┌───────▼──────────┐           │
+        │  │  Audio System     │      │  Device Control  │           │
+        │  │  - PyAudio capture│      │  - Motor control │           │
+        │  │  - PCM streaming  │      │  - Sensor read   │           │
+        │  └────────┬──────────┘      └───────┬──────────┘           │
+        │           │                          │                       │
+        │  ┌────────▼──────────┐      ┌───────▼──────────┐           │
+        │  │     Camera        │      │     Motors       │           │
+        │  │   (USB/Pi Cam)    │      │   (GPIO/I2C)     │           │
+        │  └───────────────────┘      └──────────────────┘           │
+        │                                                              │
+        │                    Raspberry Pi                             │
+        └──────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+2. COMPONENT INTERACTION
+═══════════════════════════════════════════════════════════════════════════════
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                         main.py                                 │
+    │                    (System Orchestrator)                        │
+    │                                                                 │
+    │  • Initializes all components                                  │
+    │  • Manages lifecycle                                           │
+    │  • Handles signals (SIGTERM, SIGINT)                          │
+    │  • Coordinates shutdown                                        │
+    └────┬────────────────────┬────────────────────┬─────────────────┘
+         │                    │                    │
+         │                    │                    │
+    ┌────▼─────────┐    ┌────▼─────────┐    ┌────▼─────────┐
+    │   Ngrok      │    │  WebSocket   │    │    MQTT      │
+    │   Manager    │    │   Server     │    │  Controller  │
+    │              │    │              │    │              │
+    │ • TCP tunnel │    │ • Clients    │◄───┤ • Commands   │
+    │ • HTTP tunnel│    │ • Video      │───►│ • Status     │
+    │ • URL fetch  │    │ • Audio      │    │ • Events     │
+    └──────────────┘    │ • Bridge     │    └──────┬───────┘
+                        └────┬────┬────┘           │
+                             │    │                │
+                   ┌─────────┘    └─────────┐      │
+                   │                        │      │
+              ┌────▼─────────┐      ┌──────▼──────▼──────┐
+              │   Video      │      │   Connection       │
+              │   Handler    │      │   Manager          │
+              │              │      │                    │
+              │ • Capture    │      │ • Connect          │
+              │ • Encode     │      │ • Subscribe        │
+              │ • Queue      │      │ • Publish          │
+              │ • Broadcast  │      │ • Reconnect        │
+              └──────────────┘      └────────────────────┘
+              
+              ┌──────────────┐
+              │   Audio      │
+              │   System     │
+              │              │
+              │ • Capture    │
+              │ • Queue      │
+              │ • Broadcast  │
+              └──────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+3. DATA FLOW - VIDEO STREAMING
+═══════════════════════════════════════════════════════════════════════════════
+
+    Camera                Capture Thread           Async Queue
+      │                         │                       │
+      │  Read Frame             │                       │
+      ├────────────────────────►│                       │
+      │                         │                       │
+      │                         │  Encode JPEG          │
+      │                         │  (Quality: 65)        │
+      │                         │                       │
+      │                         │  Put Frame            │
+      │                         ├──────────────────────►│
+      │                         │                       │
+      │                         │  (If queue full,      │
+      │                         │   drop oldest)        │
+      │                         │                       │
+      
+                                                        │
+                                                        │
+                                          WebSocket Server
+                                                        │
+                                                        │  Get Frame
+                                                        │◄─────────────
+                                                        │
+                                                        │  Create Packet
+                                                        │  [0x01][JPEG]
+                                                        │
+                                                        │  Broadcast
+                                                        │
+                                    ┌───────────────────┼───────────────────┐
+                                    │                   │                   │
+                                    ▼                   ▼                   ▼
+                              Client 1            Client 2            Client 3
+                                    │                   │                   │
+                                    │  (If slow,        │                   │
+                                    │   drop frame)     │                   │
+                                    │                   │                   │
+                                    ▼                   ▼                   ▼
+                              Display             Display             Display
+
+
+═══════════════════════════════════════════════════════════════════════════════
+4. DATA FLOW - AUDIO STREAMING
+═══════════════════════════════════════════════════════════════════════════════
+
+    Microphone          Audio Callback           Async Queue
+      │                         │                       │
+      │  Capture Chunk          │                       │
+      │  (1024 samples)         │                       │
+      ├────────────────────────►│                       │
+      │                         │                       │
+      │                         │  Put Chunk            │
+      │                         │  (Thread-safe)        │
+      │                         ├──────────────────────►│
+      │                         │                       │
+      │                         │  (If queue full,      │
+      │                         │   drop chunk)         │
+      │                         │                       │
+      
+                                                        │
+                                                        │
+                                          WebSocket Server
+                                                        │
+                                                        │  Get Chunk
+                                                        │◄─────────────
+                                                        │
+                                                        │  Create Packet
+                                                        │  [0x02][PCM]
+                                                        │
+                                                        │  Broadcast
+                                                        │
+                                    ┌───────────────────┼───────────────────┐
+                                    │                   │                   │
+                                    ▼                   ▼                   ▼
+                              Client 1            Client 2            Client 3
+                                    │                   │                   │
+                                    │  Decode PCM       │                   │
+                                    │  Play Audio       │                   │
+                                    │                   │                   │
+                                    ▼                   ▼                   ▼
+                              Speakers            Speakers            Speakers
+
+
+═══════════════════════════════════════════════════════════════════════════════
+5. DATA FLOW - MQTT TO WEBSOCKET
+═══════════════════════════════════════════════════════════════════════════════
+
+    MQTT Client              MQTT Broker          Connection Manager
+      │                         │                       │
+      │  Publish                │                       │
+      │  Topic: dev/motor       │                       │
+      │  Payload: "forward"     │                       │
+      ├────────────────────────►│                       │
+      │                         │                       │
+      │                         │  Message Received     │
+      │                         ├──────────────────────►│
+      │                         │                       │
+      │                         │                       │  Callback
+      │                         │                       │
+                                                        │
+                                                        ▼
+                                              Device Controller
+                                                        │
+                                                        │  Route Message
+                                                        │
+                                                        ▼
+                                              WebSocket Server
+                                                        │
+                                                        │  Create JSON
+                                                        │  {type: "mqtt_message",
+                                                        │   topic: "dev/motor",
+                                                        │   payload: "forward"}
+                                                        │
+                                                        │  Create Packet
+                                                        │  [0x00][JSON]
+                                                        │
+                                                        │  Broadcast
+                                                        │
+                                    ┌───────────────────┼───────────────────┐
+                                    │                   │                   │
+                                    ▼                   ▼                   ▼
+                              Client 1            Client 2            Client 3
+
+
+═══════════════════════════════════════════════════════════════════════════════
+6. DATA FLOW - WEBSOCKET TO MQTT
+═══════════════════════════════════════════════════════════════════════════════
+
+    Web Client            WebSocket Server        Device Controller
+      │                         │                       │
+      │  Send JSON              │                       │
+      │  {type: "mqtt_publish", │                       │
+      │   topic: "dev/motor",   │                       │
+      │   payload: "forward"}   │                       │
+      ├────────────────────────►│                       │
+      │                         │                       │
+      │                         │  Parse JSON           │
+      │                         │                       │
+      │                         │  Forward              │
+      │                         ├──────────────────────►│
+      │                         │                       │
+      │                         │                       │  Publish
+      │                         │                       │
+                                                        │
+                                                        ▼
+                                              Connection Manager
+                                                        │
+                                                        │  MQTT Publish
+                                                        │
+                                                        ▼
+                                                  MQTT Broker
+                                                        │
+                                                        │  Distribute
+                                                        │
+                                    ┌───────────────────┼───────────────────┐
+                                    │                   │                   │
+                                    ▼                   ▼                   ▼
+                              MQTT Client 1      MQTT Client 2      Device Control
+                                                                            │
+                                                                            ▼
+                                                                        Motors
+
+
+═══════════════════════════════════════════════════════════════════════════════
+7. NETWORK TOPOLOGY
+═══════════════════════════════════════════════════════════════════════════════
+
+                            Internet (WAN)
+                                  │
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │                           │
+                    │      Ngrok Cloud          │
+                    │                           │
+                    └─────────────┬─────────────┘
+                                  │
+                                  │  Encrypted Tunnels
+                                  │
+                    ┌─────────────┴─────────────┐
+                    │                           │
+                    │  tcp://0.tcp.ngrok.io:X   │  ← MQTT Tunnel
+                    │  wss://abc.ngrok.io       │  ← WebSocket Tunnel
+                    │                           │
+                    └─────────────┬─────────────┘
+                                  │
+                                  │
+                    ┌─────────────▼─────────────┐
+                    │                           │
+                    │    Raspberry Pi           │
+                    │    (Local Network)        │
+                    │                           │
+                    │  ┌─────────────────────┐ │
+                    │  │  Ngrok Agent        │ │
+                    │  │  (Port forwarding)  │ │
+                    │  └──────┬──────────────┘ │
+                    │         │                 │
+                    │  ┌──────▼──────────────┐ │
+                    │  │  WebSocket Server   │ │
+                    │  │  localhost:8765     │ │
+                    │  └─────────────────────┘ │
+                    │                           │
+                    │  ┌─────────────────────┐ │
+                    │  │  MQTT Broker        │ │
+                    │  │  localhost:1883     │ │
+                    │  └─────────────────────┘ │
+                    │                           │
+                    └───────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+8. ASYNC ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+                        asyncio Event Loop
+                                │
+                                │
+                ┌───────────────┴───────────────┐
+                │                               │
+                │  asyncio.gather()             │
+                │                               │
+                └───┬───────┬───────┬───────┬───┘
+                    │       │       │       │
+                    │       │       │       │
+        ┌───────────▼─┐  ┌──▼──┐  ┌─▼──┐  ┌─▼──────────┐
+        │ WebSocket   │  │Video│  │Audio│  │ Stats      │
+        │ Server      │  │Cast │  │Cast │  │ Reporter   │
+        │             │  │     │  │     │  │            │
+        │ • Accept    │  │ • Get│  │ • Get│  │ • Log      │
+        │ • Handle    │  │ • Send│  │ • Send│  │ • Report   │
+        │ • Broadcast │  │ • Loop│  │ • Loop│  │ • Loop     │
+        └─────────────┘  └─────┘  └─────┘  └────────────┘
+                │
+                │  For each client
+                │
+        ┌───────▼────────────────────────────┐
+        │                                    │
+        │  async for message in websocket:   │
+        │      await handle_message()        │
+        │                                    │
+        └────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+9. THREAD MODEL
+═══════════════════════════════════════════════════════════════════════════════
+
+    Main Thread                 Video Thread           Audio Thread
+    (asyncio)                   (OpenCV)               (PyAudio)
+        │                           │                       │
+        │                           │                       │
+        │  Start                    │                       │
+        ├──────────────────────────►│                       │
+        │                           │                       │
+        │                           │  Capture Frame        │
+        │                           │  Encode JPEG          │
+        │                           │                       │
+        │                           │  queue.put_nowait()   │
+        │◄──────────────────────────┤                       │
+        │                           │                       │
+        │  Start                    │                       │
+        ├───────────────────────────────────────────────────►│
+        │                           │                       │
+        │                           │                       │  Capture Audio
+        │                           │                       │  
+        │                           │                       │  asyncio.run_
+        │                           │                       │  coroutine_
+        │◄──────────────────────────────────────────────────┤  threadsafe()
+        │                           │                       │
+        │                           │                       │
+        │  MQTT Thread              │                       │
+        │  (Paho MQTT)              │                       │
+        │       │                   │                       │
+        │       │  Message          │                       │
+        │       │  Received         │                       │
+        │       │                   │                       │
+        │       │  Callback         │                       │
+        │◄──────┤                   │                       │
+        │       │                   │                       │
+        │       │  asyncio.create_  │                       │
+        │       │  task()           │                       │
+        │       │                   │                       │
+
+    Synchronization:
+    • asyncio.Queue (thread-safe)
+    • asyncio.run_coroutine_threadsafe()
+    • asyncio.create_task()
+
+
+═══════════════════════════════════════════════════════════════════════════════
+10. DEPLOYMENT ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                         Raspberry Pi OS                         │
+    │                                                                 │
+    │  ┌───────────────────────────────────────────────────────────┐ │
+    │  │                      systemd                              │ │
+    │  │                                                           │ │
+    │  │  ┌─────────────────┐         ┌─────────────────┐        │ │
+    │  │  │  mosquitto      │         │ surveillance-   │        │ │
+    │  │  │  .service       │         │ car.service     │        │ │
+    │  │  │                 │         │                 │        │ │
+    │  │  │  • Auto-start   │         │  • Auto-start   │        │ │
+    │  │  │  • Auto-restart │         │  • Auto-restart │        │ │
+    │  │  │  • Logging      │         │  • Logging      │        │ │
+    │  │  └────────┬────────┘         └────────┬────────┘        │ │
+    │  │           │                           │                 │ │
+    │  └───────────┼───────────────────────────┼─────────────────┘ │
+    │              │                           │                   │
+    │  ┌───────────▼────────┐      ┌───────────▼────────┐         │
+    │  │  Mosquitto Broker  │      │  Python App        │         │
+    │  │  /usr/sbin/        │      │  venv/bin/python   │         │
+    │  │  mosquitto         │      │  main.py           │         │
+    │  └────────────────────┘      └────────────────────┘         │
+    │                                                               │
+    │  ┌───────────────────────────────────────────────────────┐  │
+    │  │                    Ngrok Agent                        │  │
+    │  │  (Started by Python app)                              │  │
+    │  └───────────────────────────────────────────────────────┘  │
+    │                                                               │
+    │  ┌───────────────────────────────────────────────────────┐  │
+    │  │                    Hardware                           │  │
+    │  │  • Camera (USB/CSI)                                   │  │
+    │  │  • Microphone (USB)                                   │  │
+    │  │  • GPIO (Motors)                                      │  │
+    │  └───────────────────────────────────────────────────────┘  │
+    │                                                               │
+    │  ┌───────────────────────────────────────────────────────┐  │
+    │  │                    Logging                            │  │
+    │  │  • journalctl (systemd logs)                          │  │
+    │  │  • /var/log/mosquitto/                                │  │
+    │  │  • Application logs                                   │  │
+    │  └───────────────────────────────────────────────────────┘  │
+    │                                                               │
+    └───────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+LEGEND
+═══════════════════════════════════════════════════════════════════════════════
+
+    ┌─────┐
+    │     │   Component / Process
+    └─────┘
+
+    ───►    Data flow / Control flow
+
+    ◄───►   Bidirectional communication
+
+    │       Connection / Relationship
+    ▼
+
+    ═══     Section separator
+
+
+═══════════════════════════════════════════════════════════════════════════════
+NOTES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. All communication between components is asynchronous where possible
+2. Video and audio use separate threads for capture to avoid blocking
+3. MQTT runs in its own thread managed by Paho MQTT library
+4. WebSocket server runs in the main asyncio event loop
+5. Ngrok tunnels are created at startup and maintained throughout runtime
+6. All components support graceful shutdown via signal handling
+7. Error handling and reconnection logic is built into each component
+8. Statistics and logging are integrated throughout the system
+
+═══════════════════════════════════════════════════════════════════════════════
