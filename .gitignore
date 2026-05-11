@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+.kiro/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime / Generated
+settings.json
+captures/
+datasets/
+
+# Model files (too large for git)
+*.onnx
+*.pt
+*.tflite
+
+# Known faces data (user-specific)
+known_faces/encodings.pkl
+known_faces/images/*/
+
+# Logs
+*.log
