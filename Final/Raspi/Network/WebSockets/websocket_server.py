@@ -174,7 +174,13 @@ class WebSocketServer:
             self._start_mqtt_bridge()
 
         logger.info("WebSocket server starting on ws://%s:%d", self.host, self.port)
-        logger.info("WAN: forward port %d on your router to this device.", self.port)
+        
+        if not config.NGROK_ENABLED:
+            logger.info("Local network only. For WAN access:")
+            logger.info("  Option 1: Forward port %d on your router to this device", self.port)
+            logger.info("  Option 2: Enable Ngrok (NGROK_ENABLED=true NGROK_AUTH_TOKEN=token)")
+        else:
+            logger.info("Ngrok tunneling enabled - public URL will be displayed shortly")
 
         async with websockets.serve(
             self._client_handler,

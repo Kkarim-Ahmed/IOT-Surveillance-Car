@@ -1,0 +1,13 @@
+# Core WebSocket and MQTT dependencies
+websockets>=12.0
+paho-mqtt>=1.6.1
+
+# Video streaming
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+
+# Audio streaming
+PyAudio>=0.2.13
+
+# Ngrok tunneling for WAN access
+pyngrok>=7.0.0

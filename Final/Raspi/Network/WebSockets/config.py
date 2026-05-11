@@ -9,6 +9,10 @@ before launching main.py:
 
     WS_PORT=9000 MQTT_BROKER=192.168.1.10 python main.py
 
+For Ngrok WAN access (no port forwarding needed):
+
+    NGROK_ENABLED=true NGROK_AUTH_TOKEN=your_token python main.py
+
 Environment variable names match the constant names below (uppercase).
 """
 
@@ -124,6 +128,38 @@ AUDIO_QUEUE_MAX: int = int(os.environ.get("AUDIO_QUEUE_MAX", 4))
 # Timeout (seconds) for the blocking queue.get() call inside the async feeder.
 # Shorter = more responsive shutdown; longer = fewer executor wakeups.
 AUDIO_QUEUE_TIMEOUT: float = float(os.environ.get("AUDIO_QUEUE_TIMEOUT", 0.05))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ngrok Tunneling (WAN Access without Port Forwarding)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Enable/disable Ngrok tunneling globally.
+# When enabled, creates public URLs for WebSocket and MQTT services.
+# Works behind CGNAT, mobile hotspots, and restrictive firewalls.
+NGROK_ENABLED: bool = os.environ.get("NGROK_ENABLED", "false").lower() in ("true", "1", "yes")
+
+# Ngrok authentication token (REQUIRED for Ngrok to work).
+# Get your free token from: https://dashboard.ngrok.com/get-started/your-authtoken
+# Set via environment variable: export NGROK_AUTH_TOKEN="your_token_here"
+NGROK_AUTH_TOKEN: str = os.environ.get("NGROK_AUTH_TOKEN", "")
+
+# Ngrok region (affects latency). Options: us, eu, ap, au, sa, jp, in
+# Choose the region closest to your clients for best performance.
+NGROK_REGION: str = os.environ.get("NGROK_REGION", "us")
+
+# Enable WebSocket tunnel (creates wss:// public URL)
+NGROK_WEBSOCKET_ENABLED: bool = os.environ.get("NGROK_WEBSOCKET_ENABLED", "true").lower() in ("true", "1", "yes")
+
+# Enable MQTT tunnel (creates tcp:// public endpoint)
+NGROK_MQTT_ENABLED: bool = os.environ.get("NGROK_MQTT_ENABLED", "true").lower() in ("true", "1", "yes")
+
+# Local ports to tunnel (should match your service ports)
+NGROK_WS_PORT: int = int(os.environ.get("NGROK_WS_PORT", WS_PORT))
+NGROK_MQTT_PORT: int = int(os.environ.get("NGROK_MQTT_PORT", MQTT_PORT))
+
+# Ngrok tunnel reconnection settings
+NGROK_RECONNECT_DELAY: int = int(os.environ.get("NGROK_RECONNECT_DELAY", 5))  # seconds
+NGROK_HEALTH_CHECK_INTERVAL: int = int(os.environ.get("NGROK_HEALTH_CHECK_INTERVAL", 30))  # seconds
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging
