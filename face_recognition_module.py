@@ -42,7 +42,8 @@ def _get_app():
             providers=["CPUExecutionProvider"],   # CPU only
         )
         # det_size must be a multiple of 32; 320 is fast, 640 is accurate
-        _app.prepare(ctx_id=0, det_size=(320, 320))
+        # det_thresh lowered from default 0.5 → 0.35 to handle dim/real-world lighting
+        _app.prepare(ctx_id=0, det_size=(320, 320), det_thresh=0.35)
         print(f"✅ InsightFace ready (model: {model_name})")
 
     except Exception as e:

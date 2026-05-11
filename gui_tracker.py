@@ -54,6 +54,126 @@ RED      = "#ef4444"  # Red 500
 CYAN     = "#06b6d4"  # Cyan 500
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Lightweight motor dashboard calculator (mock driver — no GPIO needed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _MotorPID:
+    def __init__(self, kp=0.15, ki=0.0, kd=0.04):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self._integral   = 0.0
+        self._prev_error = 0.0
+        self._prev_t     = time.perf_counter()
+
+    def update(self, error: float) -> float:
+        now = time.perf_counter()
+        dt  = max(now - self._prev_t, 1e-4)
+        self._integral += error * dt
+        d   = (error - self._prev_error) / dt
+        out = self.kp * error + self.ki * self._integral + self.kd * d
+        self._prev_error = error
+        self._prev_t     = now
+        return out
+
+    def reset(self):
+        self._integral   = 0.0
+        self._prev_error = 0.0
+        self._prev_t     = time.perf_counter()
+
+
+class MotorDashboard:
+    """4-zone proportional differential-drive state calculator (desktop preview)."""
+
+    SAFE_CM    = 60
+    HOLD_CM    = 90     # Adjusted for slower, heavier car
+    CHASE_CM   = 200    # Start full speed earlier (2 meters)
+    BASE_SPEED = 180    # Increased to overcome 2.5kg inertia
+    DEAD_PX    = 30
+    ALPHA      = 0.35   # EMA smoothing
+
+    # Actual DC motor RPM range (loaded estimate)
+    MAX_RPM    = 75     # ~75 RPM under 600g per motor load (100 RPM no-load)
+
+    ZONE_COLOR = {
+        "STOP":   "#ef4444",
+        "HOLD":   "#f97316",
+        "FOLLOW": "#10b981",
+        "CHASE":  "#eab308",
+        "SEARCH": "#a855f7",
+        "IDLE":   "#94a3b8",
+    }
+
+    def __init__(self):
+        self._pid = _MotorPID()
+        self._el  = 0.0
+        self._er  = 0.0
+        self.reset()
+
+    def reset(self):
+        self._el = self._er = 0.0
+        self._pid.reset()
+        self.cx          = 0
+        self.cy          = 0
+        self.error_x     = 0.0
+        self.error_y     = 0.0
+        self.distance_cm = 0.0
+        self.left_speed  = 0
+        self.right_speed = 0
+        self.state       = "IDLE"
+
+    def update(self, bbox: tuple, fw: int = 640, fh: int = 480):
+        x1, y1, x2, y2 = bbox
+        self.cx      = int((x1 + x2) / 2)
+        self.cy      = int((y1 + y2) / 2)
+        self.error_x = self.cx - fw / 2.0
+        self.error_y = self.cy - fh / 2.0
+        bh           = y2 - y1
+        
+        # Adaptive reference height: face is ~30% of frame height at 1 meter
+        adaptive_ref_h = int(fh * 0.3)
+        self.distance_cm = (adaptive_ref_h * 100.0 / bh) if bh > 0 else 9999.0
+        d = self.distance_cm
+
+        if d < self.SAFE_CM:
+            self._instant_stop()
+            return
+
+        if d < self.HOLD_CM:
+            fwd, self.state = 0, "HOLD"
+        elif d < self.CHASE_CM:
+            t   = (d - self.HOLD_CM) / (self.CHASE_CM - self.HOLD_CM)
+            fwd = int(self.BASE_SPEED * (0.40 + 0.60 * max(0.0, min(1.0, t))))
+            self.state = "FOLLOW"
+        else:
+            fwd, self.state = self.BASE_SPEED, "CHASE"
+
+        turn  = 0 if abs(self.error_x) < self.DEAD_PX else int(self._pid.update(self.error_x))
+        raw_l = max(0, min(255, fwd + turn))
+        raw_r = max(0, min(255, fwd - turn))
+        self._el       = self.ALPHA * raw_l + (1 - self.ALPHA) * self._el
+        self._er       = self.ALPHA * raw_r + (1 - self.ALPHA) * self._er
+        self.left_speed  = int(self._el)
+        self.right_speed = int(self._er)
+
+    def search(self, last_error_x: float = 0.0):
+        """Visual-only SEARCH state — rotates toward side target was last seen."""
+        spd = int(self.BASE_SPEED * 0.30)
+        if last_error_x >= 0:
+            self.left_speed, self.right_speed = spd, 0
+        else:
+            self.left_speed, self.right_speed = 0, spd
+        self.distance_cm = 9999.0
+        self.error_x     = 0.0
+        self.error_y     = 0.0
+        self.state       = "SEARCH"
+
+    def _instant_stop(self):
+        self._el = self._er = 0.0
+        self.left_speed = self.right_speed = 0
+        self.state = "STOP"
+        self._pid.reset()
+
+
 def _style(root: tk.Tk):
     """Apply premium dark ttk theme."""
     style = ttk.Style(root)
@@ -132,12 +252,15 @@ class FaceTrackingGUI:
         self.multi_angle_enroll = MultiAngleEnrollment(self.quality_analyzer)
         
         # ── NEW: Accuracy improvements ───────────────────────────────────────
-        self.temporal_smoother = TemporalRecognitionSmoothing(window_size=10, min_agreement=0.6)
+        self.temporal_smoother = TemporalRecognitionSmoothing(window_size=5, min_agreement=0.5)
         self.face_preprocessor = FacePreprocessor(enable_denoising=True, enable_sharpening=True)
         self.face_aligner = FaceAligner()
         self.multi_crop = MultiCropRecognition()
         self.enhanced_body_tracker = EnhancedBodyTracker()
         self.motion_tracker = MotionPatternTracker()
+
+        # Motor dashboard calculator
+        self.motor = MotorDashboard()
         
         self.current_person_id = None  # Currently tracked person
         
@@ -188,6 +311,11 @@ class FaceTrackingGUI:
         self.current_target_id = None
         self.target_identity = "Unknown"  # Remember who we're tracking
         
+        # Lock-on and CV2 high-speed tracker state
+        self.locked_identity = None
+        self.cv2_tracker = None
+        self.tracker_initialized = False
+        
         # Performance monitoring
         self.perf_stats = {
             'fps': 0,
@@ -217,17 +345,11 @@ class FaceTrackingGUI:
         self._start_camera()
 
     def _init_body_detector(self):
-        """Initialize simple body detection."""
-        try:
-            # Try YOLO first
-            from ultralytics import YOLO
-            self.body_detector = YOLO('yolov8n.pt')
-            print("✅ YOLO body detection loaded")
-        except:
-            # Fallback to HOG
-            self.body_detector = cv2.HOGDescriptor()
-            self.body_detector.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-            print("✅ HOG body detection loaded")
+        """Initialize high-speed OpenCV tracker (Zero-lag)."""
+        # We no longer load YOLO/HOG as they cause severe lag.
+        # We will use cv2.TrackerKCF_create() dynamically when a face is found.
+        self.body_detector = None
+        print("✅ High-speed OpenCV tracking engine ready (Zero-lag)")
     
     def _apply_settings(self):
         """Apply settings from settings manager."""
@@ -424,17 +546,24 @@ class FaceTrackingGUI:
         self._pid_sliders = {}
         self.tracking_status_var = tk.StringVar(value="Status: Idle")
 
-        # 1 column for sidebar, 1 for video. Video gets all the weight.
+        # Sidebar | Video | Motor dashboard
         self.root.columnconfigure(0, weight=0)
         self.root.columnconfigure(1, weight=1)
+        self.root.columnconfigure(2, weight=0)
         self.root.rowconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=0)
 
-        # Left sidebar (slim)
+        # Left sidebar
         sidebar = ttk.Frame(self.root, width=320, style="Sidebar.TFrame")
         sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
         sidebar.grid_propagate(False)
         self._build_sidebar(sidebar)
+
+        # Right motor dashboard panel
+        motor_panel = ttk.Frame(self.root, width=270, style="Sidebar.TFrame")
+        motor_panel.grid(row=0, column=2, rowspan=2, sticky="nsew")
+        motor_panel.grid_propagate(False)
+        self._build_motor_dashboard(motor_panel)
 
         # Video panel (maximized)
         video_frame = ttk.Frame(self.root, style="TFrame")
@@ -534,6 +663,225 @@ class FaceTrackingGUI:
         ttk.Button(quit_frame, text="✕  Exit System",
                    style="Danger.TButton",
                    command=self.on_closing).pack(fill="x")
+
+    def _build_motor_dashboard(self, parent):
+        """Right-side car motor telemetry panel."""
+        parent.columnconfigure(0, weight=1)
+        CW = 234   # inner canvas / bar width
+
+        # ── Title ─────────────────────────────────────────────────────────────
+        ttk.Label(parent, text="Car Motor Dashboard",
+                  style="Sidebar.TLabel",
+                  font=("Segoe UI", 13, "bold"),
+                  anchor="center").pack(fill="x", pady=(18, 4), padx=12)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=12, pady=(0, 10))
+
+        # ── Zone badge ────────────────────────────────────────────────────────
+        self._zone_badge = tk.Label(parent, text="IDLE",
+                                    bg=MotorDashboard.ZONE_COLOR["IDLE"],
+                                    fg="white",
+                                    font=("Segoe UI", 14, "bold"),
+                                    pady=6)
+        self._zone_badge.pack(fill="x", padx=12, pady=(0, 6))
+
+        # ── Distance row ──────────────────────────────────────────────────────
+        dist_row = ttk.Frame(parent, style="Sidebar.TFrame")
+        dist_row.pack(fill="x", padx=16, pady=(0, 10))
+        ttk.Label(dist_row, text="Distance:", style="Sidebar.TLabel",
+                  foreground=FG2, font=("Segoe UI", 10)).pack(side="left")
+        self._dist_var = tk.StringVar(value="-- cm")
+        ttk.Label(dist_row, textvariable=self._dist_var, style="Sidebar.TLabel",
+                  font=("Segoe UI", 11, "bold")).pack(side="right")
+
+        # ── Face Position section ─────────────────────────────────────────────
+        pos_frame = ttk.LabelFrame(parent, text="Face Position",
+                                   style="Sidebar.TLabelframe")
+        pos_frame.pack(fill="x", padx=12, pady=(0, 10))
+
+        # Coordinate canvas  (crosshair + deadzone + face dot + arrow)
+        self._coord_canvas = tk.Canvas(pos_frame, width=CW, height=110,
+                                       bg=BG3, highlightthickness=0)
+        self._coord_canvas.pack(padx=8, pady=(8, 4))
+        self._draw_coord_canvas()   # draw idle state immediately
+
+        # Numeric readouts
+        info_grid = ttk.Frame(pos_frame, style="Sidebar.TFrame")
+        info_grid.pack(fill="x", padx=12, pady=(0, 8))
+        info_grid.columnconfigure(1, weight=1)
+
+        self._pos_var  = tk.StringVar(value="cx -- / cy --")
+        self._errx_var = tk.StringVar(value="--")
+        self._erry_var = tk.StringVar(value="--")
+
+        for r, (lbl, var) in enumerate([
+            ("Position", self._pos_var),
+            ("Error X",  self._errx_var),
+            ("Error Y",  self._erry_var),
+        ]):
+            ttk.Label(info_grid, text=lbl, style="Sidebar.TLabel",
+                      foreground=FG2, font=("Segoe UI", 9)).grid(
+                      row=r, column=0, sticky="w", pady=1)
+            ttk.Label(info_grid, textvariable=var, style="Sidebar.TLabel",
+                      font=("Segoe UI", 10, "bold")).grid(
+                      row=r, column=1, sticky="e", pady=1)
+
+        # ── Motor Commands section ────────────────────────────────────────────
+        cmd_frame = ttk.LabelFrame(parent, text="Motor Commands",
+                                   style="Sidebar.TLabelframe")
+        cmd_frame.pack(fill="x", padx=12, pady=(0, 10))
+
+        bars_grid = ttk.Frame(cmd_frame, style="Sidebar.TFrame")
+        bars_grid.pack(fill="x", padx=8, pady=8)
+        bars_grid.columnconfigure(1, weight=1)
+
+        self._left_spd_var  = tk.StringVar(value="0")
+        self._right_spd_var = tk.StringVar(value="0")
+
+        for r, (side, var) in enumerate([("L", self._left_spd_var),
+                                          ("R", self._right_spd_var)]):
+            ttk.Label(bars_grid, text=side, style="Sidebar.TLabel",
+                      foreground=FG2, font=("Segoe UI", 10, "bold")).grid(
+                      row=r, column=0, sticky="w", padx=(0, 6), pady=3)
+
+            bar_canvas = tk.Canvas(bars_grid, width=CW - 56, height=18,
+                                   bg=BG3, highlightthickness=0)
+            bar_canvas.grid(row=r, column=1, sticky="ew", pady=3)
+            if r == 0:
+                self._left_bar_canvas  = bar_canvas
+            else:
+                self._right_bar_canvas = bar_canvas
+
+            ttk.Label(bars_grid, textvariable=var, style="Sidebar.TLabel",
+                      font=("Segoe UI", 10, "bold"), width=7).grid(
+                      row=r, column=2, sticky="e", padx=(6, 0), pady=3)
+
+        # ── Steering indicator ────────────────────────────────────────────────
+        steer_frame = ttk.LabelFrame(parent, text="Steering",
+                                     style="Sidebar.TLabelframe")
+        steer_frame.pack(fill="x", padx=12, pady=(0, 12))
+
+        self._steer_canvas = tk.Canvas(steer_frame, width=CW, height=36,
+                                       bg=BG3, highlightthickness=0)
+        self._steer_canvas.pack(padx=8, pady=8)
+        self._draw_steer_canvas(0.0, "#94a3b8")
+
+    # ── Motor display helpers ─────────────────────────────────────────────────
+
+    def _draw_coord_canvas(self):
+        c  = self._coord_canvas
+        c.delete("all")
+        W, H  = 234, 110
+        cx, cy = W // 2, H // 2
+
+        # Grid lines
+        c.create_line(cx, 0, cx, H, fill=BG2, width=1)
+        c.create_line(0, cy, W, cy, fill=BG2, width=1)
+
+        # Dead-zone box
+        SCALE_X = (W // 2 - 6) / 320.0
+        SCALE_Y = (H // 2 - 6) / 240.0
+        dz_px = int(MotorDashboard.DEAD_PX * SCALE_X)
+        dz_py = int(MotorDashboard.DEAD_PX * SCALE_Y)
+        c.create_rectangle(cx - dz_px, cy - dz_py, cx + dz_px, cy + dz_py,
+                           outline="#475569", width=1, dash=(4, 3))
+
+        m = self.motor
+        if m.state == "IDLE":
+            c.create_oval(cx - 4, cy - 4, cx + 4, cy + 4,
+                          fill="#475569", outline="")
+            return
+
+        color = MotorDashboard.ZONE_COLOR.get(m.state, "#94a3b8")
+        fx = int(cx + m.error_x * SCALE_X)
+        fy = int(cy + m.error_y * SCALE_Y)
+        fx = max(6, min(W - 6, fx))
+        fy = max(6, min(H - 6, fy))
+
+        # Arrow from center to face position
+        if abs(m.error_x) > 4 or abs(m.error_y) > 4:
+            c.create_line(cx, cy, fx, fy, fill=color, width=2,
+                          arrow=tk.LAST, arrowshape=(8, 10, 4))
+
+        # Center dot
+        c.create_oval(cx - 3, cy - 3, cx + 3, cy + 3,
+                      fill="#64748b", outline="")
+        # Face dot
+        c.create_oval(fx - 6, fy - 6, fx + 6, fy + 6,
+                      fill=color, outline="white", width=1)
+
+    def _draw_speed_bar(self, canvas: tk.Canvas, speed: int, color: str):
+        canvas.delete("all")
+        W = canvas.winfo_width() or (234 - 56)
+        H = 18
+        fill_w = int(speed / 255.0 * W)
+        canvas.create_rectangle(0, 0, W, H, fill=BG2, outline="")
+        if fill_w > 0:
+            canvas.create_rectangle(0, 0, fill_w, H, fill=color, outline="")
+
+    def _draw_steer_canvas(self, error_x: float, color: str):
+        c  = self._steer_canvas
+        c.delete("all")
+        W, H = 234, 36
+        cx, cy = W // 2, H // 2
+
+        # Track line
+        c.create_line(10, cy, W - 10, cy, fill="#334155", width=2)
+        # Center tick
+        c.create_line(cx, cy - 6, cx, cy + 6, fill="#475569", width=1)
+
+        # Clamp and scale steering arrow
+        clamped = max(-320.0, min(320.0, error_x))
+        tip_x   = int(cx + clamped * ((W // 2 - 12) / 320.0))
+        tip_x   = max(12, min(W - 12, tip_x))
+
+        if abs(error_x) < MotorDashboard.DEAD_PX:
+            c.create_oval(cx - 5, cy - 5, cx + 5, cy + 5,
+                          fill=color, outline="")
+        else:
+            c.create_line(cx, cy, tip_x, cy, fill=color, width=3,
+                          arrow=tk.LAST, arrowshape=(10, 12, 5))
+
+    def _update_motor_display(self):
+        """Refresh all motor dashboard widgets from current self.motor state."""
+        m     = self.motor
+        color = MotorDashboard.ZONE_COLOR.get(m.state, "#94a3b8")
+
+        # Zone badge
+        self._zone_badge.config(text=m.state, bg=color)
+
+        # Distance
+        if m.distance_cm < 9000:
+            self._dist_var.set(f"{m.distance_cm:.0f} cm")
+        else:
+            self._dist_var.set("-- cm")
+
+        # Coordinate readouts
+        if m.state != "IDLE":
+            sign_x = "+" if m.error_x >= 0 else ""
+            sign_y = "+" if m.error_y >= 0 else ""
+            self._pos_var.set(f"cx {m.cx}  /  cy {m.cy}")
+            self._errx_var.set(f"{sign_x}{m.error_x:.0f} px")
+            self._erry_var.set(f"{sign_y}{m.error_y:.0f} px")
+        else:
+            self._pos_var.set("cx --  /  cy --")
+            self._errx_var.set("--")
+            self._erry_var.set("--")
+
+        # Coordinate canvas
+        self._draw_coord_canvas()
+
+        # Speed bar values — mapped to actual DC motor RPM range (0-100)
+        rpm_l = int((m.left_speed / 255.0) * m.MAX_RPM)
+        rpm_r = int((m.right_speed / 255.0) * m.MAX_RPM)
+        self._left_spd_var.set(f"{rpm_l} rpm")
+        self._right_spd_var.set(f"{rpm_r} rpm")
+        self._draw_speed_bar(self._left_bar_canvas,  m.left_speed,  color)
+        self._draw_speed_bar(self._right_bar_canvas, m.right_speed, color)
+
+        # Steering canvas
+        self._draw_steer_canvas(m.error_x, color)
+
 
     # =========================================================================
     # Camera loop (background thread)
@@ -640,6 +988,9 @@ class FaceTrackingGUI:
                                 if smoothed_name != "Unknown":
                                     self.confidence_display.update(smoothed_conf)
                         else:
+                            # No faces detected — flush smoother so next face
+                            # starts with a clean slate (no stale votes)
+                            self.temporal_smoother.reset()
                             self.recognition_results = []
                 except Exception as e:
                     print(f"Face recognition error: {e}")
@@ -676,6 +1027,10 @@ class FaceTrackingGUI:
                     if self.mode == "tracking":
                         self._process_enhanced_tracking()
                         self._update_tracking_llm_event()
+                        
+                        # If no face found in tracking mode, spin toward last-known side
+                        if not self.face_locations:
+                            self.motor.search(last_error_x=self.motor.error_x)
                 except Exception as e:
                     print(f"Tracking processing error: {e}")
 
@@ -713,6 +1068,9 @@ class FaceTrackingGUI:
                 except Exception as e:
                     print(f"Performance tracking error: {e}")
 
+                # Refresh motor dashboard
+                self.root.after(0, self._update_motor_display)
+
                 self.frame_count += 1
                 
                 # Update status
@@ -741,108 +1099,83 @@ class FaceTrackingGUI:
                 continue  # Skip expired people
                 
             best_match = None
-            best_distance = float('inf')
-            
-            for i in unmatched_faces:
-                if i >= len(self.face_locations):
-                    continue
-                    
-                top, right, bottom, left = self.face_locations[i]
-                face_center = ((left + right) // 2, (top + bottom) // 2)
-                
-                # Calculate distance to last known position
-                last_pos = person_data['last_pos']
-                if last_pos:
-                    distance = np.sqrt((face_center[0] - last_pos[0])**2 + 
-                                     (face_center[1] - last_pos[1])**2)
-                    
-                    if distance < best_distance and distance < 150:  # Max 150 pixels
-                        best_distance = distance
-                        best_match = i
-            
-            if best_match is not None:
-                matched_people[person_id] = best_match
-                unmatched_faces.remove(best_match)
-        
-        # Update matched people
-        for person_id, face_idx in matched_people.items():
-            if face_idx < len(self.recognition_results):
-                name, confidence = self.recognition_results[face_idx]
-            else:
-                name, confidence = "Unknown", 0.0
-                
-            top, right, bottom, left = self.face_locations[face_idx]
-            center = ((left + right) // 2, (top + bottom) // 2)
-            
-            self.tracked_people[person_id].update({
-                'name': name,
-                'confidence': confidence,
-                'last_pos': center,
-                'last_seen': current_time,
-                'bbox': (left, top, right - left, bottom - top)
-            })
-        
-        # Add new people for unmatched faces (up to max limit)
-        current_count = len([p for p in self.tracked_people.values() 
-                           if current_time - p['last_seen'] < 5.0])
-        
-        for face_idx in unmatched_faces:
-            if current_count >= max_people:
-                break
-                
-            if face_idx < len(self.recognition_results):
-                name, confidence = self.recognition_results[face_idx]
-            else:
-                name, confidence = "Unknown", 0.0
-                
-            top, right, bottom, left = self.face_locations[face_idx]
-            center = ((left + right) // 2, (top + bottom) // 2)
-            
-            person_id = self.next_person_id
-            self.next_person_id += 1
-            
-            self.tracked_people[person_id] = {
-                'name': name,
-                'confidence': confidence,
-                'last_pos': center,
-                'last_seen': current_time,
-                'color': self._get_person_color(person_id),
-                'bbox': (left, top, right - left, bottom - top)
-            }
-            current_count += 1
-        
-        # Clean up expired people
-        expired_ids = [pid for pid, data in self.tracked_people.items()
-                      if current_time - data['last_seen'] > 5.0]
-        for pid in expired_ids:
-            del self.tracked_people[pid]
-
     def _process_enhanced_tracking(self):
-        """Enhanced tracking with face + body tracking and identity persistence."""
+        """Enhanced tracking with Identity Lock and Zero-Lag OpenCV Tracker."""
         current_time = time.time()
 
-        # Step 1: Try face tracking first
+        # Step 1: Process detected faces
         if self.face_locations:
-            # Face detected - do face tracking
-            if self.servo_var.get():
-                self._do_face_tracking()
+            best_i = -1
+            best_area = 0
             
-            # Reset face lost timer and update identity
-            self.face_lost_time = None
-            self.tracking_mode = "face"
+            # IDENTITY LOCK LOGIC
+            # If we don't have a locked identity, look for ANY known person
+            if self.locked_identity is None:
+                for i, (name, conf) in enumerate(self.recognition_results):
+                    if name != "Unknown":
+                        self.locked_identity = name
+                        print(f"🔒 Locked on to {name}")
+                        break
             
-            # Update target identity from recognition
-            if self.recognition_results:
-                name, conf = self.recognition_results[0]
-                if name != "Unknown":
-                    self.target_identity = name
-                    self.tracking_status_var.set(f"✅ Tracking: {name} (Face)")
-                else:
-                    self.tracking_status_var.set(f"👤 Tracking: Unknown (Face)")
+            # Find the face matching our locked identity
+            if self.locked_identity is not None:
+                for i, (name, conf) in enumerate(self.recognition_results):
+                    if name == self.locked_identity:
+                        top, right, bottom, left = self.face_locations[i]
+                        a = (right - left) * (bottom - top)
+                        if a > best_area:
+                            best_area, best_i = a, i
             
-            return
+            # If our locked person wasn't found (or we have no lock), fall back to largest face
+            if best_i == -1:
+                for i, (top, right, bottom, left) in enumerate(self.face_locations):
+                    a = (right - left) * (bottom - top)
+                    if a > best_area:
+                        best_area, best_i = a, i
 
-        # Step 2: No faces detected - handle face loss
+            if best_i != -1:
+                t, r, b, l = self.face_locations[best_i]
+                fw = getattr(config, 'FRAME_WIDTH', 640)
+                fh = getattr(config, 'FRAME_HEIGHT', 480)
+                self.motor.update((l, t, r, b), fw, fh)
+
+                # Initialize High-Speed Tracker on this face/body box
+                try:
+                    w = r - l
+                    h = b - t
+                    pad_w = int(w * 0.5)
+                    pad_h = int(h * 1.0)
+                    track_box = (max(0, l - pad_w), max(0, t - pad_h // 2), 
+                               min(fw - (l - pad_w), w + pad_w * 2), 
+                               min(fh - (t - pad_h // 2), h + pad_h * 1.5))
+                    
+                    try:
+                        self.cv2_tracker = cv2.TrackerKCF_create()
+                    except:
+                        try:
+                            self.cv2_tracker = cv2.legacy.TrackerMOSSE_create()
+                        except:
+                            self.cv2_tracker = cv2.legacy.TrackerKCF_create()
+                    
+                    self.cv2_tracker.init(self.current_frame, track_box)
+                    self.tracker_initialized = True
+                    self.target_body_box = track_box
+                except Exception as e:
+                    print(f"Tracker init error: {e}")
+                    self.tracker_initialized = False
+
+                if self.servo_var.get():
+                    self._do_face_tracking()
+                
+                self.face_lost_time = None
+                self.tracking_mode = "face"
+                
+                name = self.recognition_results[best_i][0] if best_i < len(self.recognition_results) else "Unknown"
+                self.target_identity = name
+                self.tracking_status_var.set(f"✅ Tracking: {name}")
+                return
+
+        # Step 2: Face lost - fallback to High-Speed CV2 Tracker
         if self.tracking_mode == "face":
             if self.face_lost_time is None:
                 self.face_lost_time = current_time
@@ -852,187 +1185,47 @@ class FaceTrackingGUI:
             elapsed = current_time - self.face_lost_time
             if self.body_tracking_var.get() and elapsed > self.face_lost_timeout:
                 self.tracking_mode = "body"
-                print(f"🔄 Switching to body tracking for {self.target_identity}")
+                print(f"🔄 Switching to fast body tracking for {self.target_identity}")
                 self.tracking_status_var.set(f"🎯 Body tracking: {self.target_identity}")
 
-        # Step 3: Body tracking with identity persistence
+        # Step 3: Body tracking using OpenCV Tracker
         if self.tracking_mode == "body" and self.body_tracking_var.get():
-            if self.servo_var.get():
-                body_found = self._do_body_tracking()
-                if body_found:
-                    self.tracking_status_var.set(f"🎯 Body tracking: {self.target_identity}")
-                else:
-                    if current_time - self.face_lost_time > 8.0:
-                        self.tracking_mode = "lost"
-                        self.target_body_box = None
-                        self.tracking_status_var.set(f"❌ Lost: {self.target_identity}")
-                        print(f"❌ Lost tracking completely")
+            body_found = False
+            if self.tracker_initialized and self.cv2_tracker is not None:
+                try:
+                    ok, bbox = self.cv2_tracker.update(self.current_frame)
+                    if ok:
+                        x, y, w, h = [int(v) for v in bbox]
+                        self.target_body_box = (x, y, w, h)
+                        body_found = True
+                        if self.servo_var.get():
+                            cx = x + w // 2
+                            cy = y + h // 2
+                            self.servo.update(cx, cy)
+                            
+                            fw = getattr(config, 'FRAME_WIDTH', 640)
+                            fh = getattr(config, 'FRAME_HEIGHT', 480)
+                            self.motor.update((x, y, x+w, y+h), fw, fh)
+                except Exception as e:
+                    print(f"Tracker update error: {e}")
+
+            if body_found:
+                self.tracking_status_var.set(f"🎯 Body tracking: {self.target_identity}")
             else:
-                self._detect_and_show_bodies()
-                if self.target_body_box:
-                    self.tracking_status_var.set(f"👁️ Body visible: {self.target_identity}")
+                if current_time - self.face_lost_time > 5.0:
+                    self.tracking_mode = "lost"
+                    self.target_body_box = None
+                    self.locked_identity = None  # UNLOCK so we can find someone else
+                    self.tracker_initialized = False
+                    self.tracking_status_var.set(f"❌ Lost: {self.target_identity}")
+                    if self.servo_var.get():
+                        self.motor.search()
+                    print(f"❌ Lost tracking completely. Lock released.")
         elif not self.body_tracking_var.get():
             self.tracking_status_var.set("⚠️ Body tracking disabled")
             self.tracking_mode = "face"
-            self.target_identity = self.recognition_results[0][0] if self.recognition_results else "Unknown"
-            return
-
-        # Step 2: No faces detected - handle face loss
-        if self.tracking_mode == "face":
-            if self.face_lost_time is None:
-                self.face_lost_time = current_time
-                print(f"😞 Lost {self.target_identity} - starting {self.face_lost_timeout}s timer")
-            
-            elapsed = current_time - self.face_lost_time
-            if self.body_tracking_var.get() and elapsed > self.face_lost_timeout:
-                self.tracking_mode = "body"
-                print(f"🔄 Switching to body tracking for {self.target_identity}")
-
-        # Step 3: Body tracking with identity persistence
-        if self.tracking_mode == "body" and self.body_tracking_var.get():
-            if self.servo_var.get():
-                body_found = self._do_body_tracking()
-                if not body_found:
-                    if current_time - self.face_lost_time > 8.0:
-                        self.tracking_mode = "lost"
-                        self.target_body_box = None
-                        print(f"❌ Lost tracking of {self.target_identity} completely")
-            else:
-                self._detect_and_show_bodies()
-
-    def _select_best_target(self):
-        """Select the best person to track."""
-        if not self.tracked_people:
-            return None
-            
-        # Priority: known people > current target > largest face
-        current_time = time.time()
-        active_people = {pid: data for pid, data in self.tracked_people.items()
-                        if current_time - data['last_seen'] < 1.0}
-        
-        if not active_people:
-            return None
-            
-        # If we have a current target, stick with them
-        if self.current_target_id and self.current_target_id in active_people:
-            return active_people[self.current_target_id]
-        
-        # Prefer known people
-        known_people = {pid: data for pid, data in active_people.items()
-                       if data['name'] != "Unknown"}
-        
-        if known_people:
-            # Select known person with highest confidence
-            best_person = max(known_people.values(), key=lambda p: p['confidence'])
-            self.current_target_id = next(pid for pid, data in known_people.items() 
-                                        if data == best_person)
-            return best_person
-        
-        # Fall back to largest face
-        best_person = max(active_people.values(), 
-                         key=lambda p: p['bbox'][2] * p['bbox'][3])
-        self.current_target_id = next(pid for pid, data in active_people.items() 
-                                    if data == best_person)
-        return best_person
-
-    def _do_face_tracking_with_identity(self, person_data):
-        """Face tracking with identity information."""
-        bbox = person_data['bbox']
-        cx = bbox[0] + bbox[2] // 2
-        cy = bbox[1] + bbox[3] // 2
-        
-        # Store identity
-        self.target_identity = person_data['name']
-        
-        # Apply smoothing and update servo
-        if self.smoothed_position is None:
-            self.smoothed_position = (cx, cy)
-        else:
-            a = config.SMOOTHING_FACTOR
-            sx = int(a * cx + (1 - a) * self.smoothed_position[0])
-            sy = int(a * cy + (1 - a) * self.smoothed_position[1])
-            self.smoothed_position = (sx, sy)
-
-        if self.servo_var.get():
-            self.servo.update(*self.smoothed_position)
-
-    def _auto_select_target(self):
-        """Auto-select the best target to track."""
-        target = self._select_best_target()
-        if target:
-            self.status_var.set(f"Auto-selected target: {target['name']}")
-        else:
-            self.status_var.set("No suitable target found")
-
-    def _clear_all_targets(self):
-        """Clear all tracked people."""
-        self.tracked_people.clear()
-        self.current_target_id = None
-        self.target_identity = "Unknown"
-        self.status_var.set("All targets cleared")
-
-    def _update_performance_display(self):
-        """Update the FPS display only."""
-        try:
-            stats = self.perf_stats
-            
-            # Update FPS display safely
-            fps_value = stats.get('fps', 0)
-            self.fps_var.set(f"FPS: {fps_value:.1f}")
-            
-        except Exception as e:
-            print(f"Performance display error: {e}")
-
-    # =========================================================================
-    # Mode processing (legacy methods for compatibility)
-    # =========================================================================
-
-    def _process_tracking(self):
-        """Legacy method - redirects to enhanced tracking."""
-        self._process_enhanced_tracking()
-
-    def _do_face_tracking(self):
-        """Original face tracking logic."""
-        # Largest face
-        best_i, best_area = 0, 0
-        for i, (top, right, bottom, left) in enumerate(self.face_locations):
-            a = (right - left) * (bottom - top)
-            if a > best_area:
-                best_area, best_i = a, i
-
-        top, right, bottom, left = self.face_locations[best_i]
-        cx = (left + right) // 2
-        cy = (top  + bottom) // 2
-
-        # Exponential smoothing
-        if self.smoothed_position is None:
-            self.smoothed_position = (cx, cy)
-        else:
-            a  = config.SMOOTHING_FACTOR
-            sx = int(a * cx + (1 - a) * self.smoothed_position[0])
-            sy = int(a * cy + (1 - a) * self.smoothed_position[1])
-            self.smoothed_position = (sx, sy)
-
-        self.servo.update(*self.smoothed_position)
-
-    def _do_body_tracking(self):
-        """Simple body tracking when face is lost."""
-        try:
-            bodies = self._detect_bodies()
-            
-            if not bodies:
-                self.target_body_box = None
-                return False
-            
-            # Use closest body to last known position or largest body
-            if self.smoothed_position:
-                # Find closest body to last face position
-                best_body = None
-                best_distance = float('inf')
-                
-                for body in bodies:
-                    bx, by, bw, bh = body
-                    body_center = (bx + bw // 2, by + bh // 2)
+            if current_time - (self.face_lost_time or current_time) > 5.0:
+                self.locked_identity = None  # UNLOCK // 2)
                     distance = np.sqrt((body_center[0] - self.smoothed_position[0])**2 + 
                                      (body_center[1] - self.smoothed_position[1])**2)
                     

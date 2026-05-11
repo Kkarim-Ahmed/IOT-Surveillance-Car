@@ -2,6 +2,7 @@
 """
 Temporal Smoothing for Recognition
 Reduces flickering by voting across multiple frames.
+Fast identity-change detection flushes stale votes immediately.
 """
 
 import numpy as np
@@ -10,21 +11,63 @@ from typing import Tuple, Optional
 
 
 class TemporalRecognitionSmoothing:
-    """Smooth recognition results over time to reduce flickering."""
+    """Smooth recognition results over time to reduce flickering.
     
-    def __init__(self, window_size: int = 10, min_agreement: float = 0.6):
+    Includes fast identity-switch detection: if the raw recognizer
+    returns a *different* identity for SWITCH_THRESHOLD consecutive
+    frames, the history is flushed and restarted with the new identity.
+    This eliminates the 2-3 second lag when switching faces.
+    """
+    
+    # Number of consecutive "different identity" frames needed to flush history
+    SWITCH_THRESHOLD = 2
+
+    def __init__(self, window_size: int = 5, min_agreement: float = 0.5):
         """
         Args:
-            window_size: Number of frames to consider
-            min_agreement: Minimum vote ratio to accept result (0.6 = 60%)
+            window_size: Number of frames to consider (reduced for faster switching)
+            min_agreement: Minimum vote ratio to accept result (0.5 = 50%)
         """
         self.window_size = window_size
         self.min_agreement = min_agreement
         self.recognition_history = deque(maxlen=window_size)
         self.confidence_history = deque(maxlen=window_size)
+        
+        # Fast identity-switch detection state
+        self._last_committed_name: Optional[str] = None
+        self._switch_candidate: Optional[str] = None
+        self._switch_streak: int = 0
     
     def add_recognition(self, name: str, confidence: float) -> None:
-        """Add recognition result to history."""
+        """Add recognition result to history with identity-change detection."""
+        
+        # ── Fast identity-switch detection ────────────────────────────────
+        if self._last_committed_name is not None and name != self._last_committed_name:
+            # A different identity appeared
+            if name == self._switch_candidate:
+                self._switch_streak += 1
+            else:
+                # New candidate — start counting
+                self._switch_candidate = name
+                self._switch_streak = 1
+            
+            # Enough consecutive different-identity frames → flush history
+            if self._switch_streak >= self.SWITCH_THRESHOLD:
+                self.recognition_history.clear()
+                self.confidence_history.clear()
+                self._last_committed_name = name
+                self._switch_candidate = None
+                self._switch_streak = 0
+        elif name == self._last_committed_name:
+            # Same identity as committed — reset switch detection
+            self._switch_candidate = None
+            self._switch_streak = 0
+        
+        # If this is the very first recognition, commit it immediately
+        if self._last_committed_name is None:
+            self._last_committed_name = name
+        
+        # ── Normal vote accumulation ──────────────────────────────────────
         self.recognition_history.append(name)
         self.confidence_history.append(confidence)
     
@@ -61,6 +104,9 @@ class TemporalRecognitionSmoothing:
         # Boost confidence based on agreement
         boosted_confidence = avg_confidence * (0.5 + 0.5 * vote_ratio)
         
+        # Update committed name
+        self._last_committed_name = best_name
+        
         return best_name, boosted_confidence
     
     def get_vote_distribution(self) -> dict:
@@ -80,6 +126,9 @@ class TemporalRecognitionSmoothing:
         """Reset history."""
         self.recognition_history.clear()
         self.confidence_history.clear()
+        self._last_committed_name = None
+        self._switch_candidate = None
+        self._switch_streak = 0
     
     def is_stable(self) -> bool:
         """Check if recognition is stable (high agreement)."""
@@ -99,7 +148,7 @@ class TemporalRecognitionSmoothing:
 class MultiPersonTemporalSmoothing:
     """Temporal smoothing for multiple people."""
     
-    def __init__(self, window_size: int = 10, min_agreement: float = 0.6):
+    def __init__(self, window_size: int = 5, min_agreement: float = 0.5):
         self.window_size = window_size
         self.min_agreement = min_agreement
         self.person_smoothers = {}  # person_id -> TemporalRecognitionSmoothing

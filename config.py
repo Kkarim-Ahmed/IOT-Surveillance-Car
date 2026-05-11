@@ -149,3 +149,38 @@ DISPLAY_SCALE = 1.0  # Scale display window (1.0 = original size)
 # ============================================================================
 IS_RASPBERRY_PI = False  # Set to True when running on Pi
 ENABLE_SERVO_CONTROL = False  # Set to True to enable servo motors
+
+# ── DC Motor Settings ────────────────────────────────────────────────────────
+DC_MOTOR_MAX_RPM = 100  # Maximum RPM of your DC motor
+
+# ── Auto-apply Pi optimisations when IS_RASPBERRY_PI is True ─────────────────
+if IS_RASPBERRY_PI:
+    # Camera: lower resolution = much faster
+    FRAME_WIDTH = 320
+    FRAME_HEIGHT = 240
+    FPS_TARGET = 15
+
+    # Recognition: run less often to save CPU
+    PROCESS_EVERY_N_FRAMES = 8       # was 5, saves ~40% recognition CPU
+
+    # Disable expensive preprocessing (saves ~40ms per frame)
+    PI_DISABLE_DENOISING = True      # fastNlMeansDenoising is too heavy
+    PI_DISABLE_SHARPENING = True     # InsightFace normalises internally
+
+    # Limit CPU cores (leave 1 for the OS)
+    MAX_CPU_CORES = 3
+
+    # InsightFace: keep det_size at 320 (already fast)
+    # Similarity threshold: slightly higher to reduce false positives
+    RECOGNITION_TOLERANCE = 0.35
+
+    # Servo speed: slower to avoid jitter on lower FPS
+    MAX_SERVO_SPEED = 3
+
+    # Temporal smoothing: already optimised (window=5)
+    # Body tracking: prefer HOG over YOLO on Pi (less RAM)
+    PREFER_HOG_BODY_DETECTOR = True
+else:
+    PI_DISABLE_DENOISING = False
+    PI_DISABLE_SHARPENING = False
+    PREFER_HOG_BODY_DETECTOR = False
