@@ -16,6 +16,7 @@ from . import config
 from .websocket_server import WebSocketServer
 from .ngrok_manager import NgrokManager
 from MQTT.mqtt_device_controller import MQTTDeviceController
+from MQTT.custom_mqtt_broker import CustomMQTTBroker
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class SurveillanceCarSystem:
     """Main system orchestrator"""
     
     def __init__(self):
+        self.mqtt_broker = None
         self.mqtt_controller = None
         self.websocket_server = None
         self.ngrok_manager = None
@@ -39,7 +41,22 @@ class SurveillanceCarSystem:
         config.print_config()
         
         try:
-            # 1. Initialize MQTT Controller
+            # 1. Start Custom MQTT Broker
+            logger.info("Starting Custom MQTT Broker...")
+            self.mqtt_broker = CustomMQTTBroker(
+                host=config.MQTT_BROKER_HOST,
+                port=config.MQTT_BROKER_PORT
+            )
+            
+            # Start broker in background
+            asyncio.create_task(self.mqtt_broker.start())
+            
+            # Wait for broker to start
+            await asyncio.sleep(2)
+            
+            logger.info("Custom MQTT Broker started ✓")
+            
+            # 2. Initialize MQTT Controller
             logger.info("Initializing MQTT controller...")
             self.mqtt_controller = MQTTDeviceController(
                 broker_host=config.MQTT_BROKER_HOST,
@@ -65,7 +82,7 @@ class SurveillanceCarSystem:
             
             logger.info("MQTT controller initialized ✓")
             
-            # 2. Initialize WebSocket Server
+            # 3. Initialize WebSocket Server
             logger.info("Initializing WebSocket server...")
             self.websocket_server = WebSocketServer(self.mqtt_controller)
             
@@ -76,7 +93,7 @@ class SurveillanceCarSystem:
             
             logger.info("WebSocket server initialized ✓")
             
-            # 3. Initialize Ngrok Manager
+            # 4. Initialize Ngrok Manager
             if config.NGROK_ENABLED:
                 logger.info("Initializing Ngrok tunnels...")
                 self.ngrok_manager = NgrokManager()
@@ -87,7 +104,7 @@ class SurveillanceCarSystem:
                 else:
                     logger.warning("Ngrok tunnels failed to initialize")
             
-            # 4. Start WebSocket Server (blocking)
+            # 5. Start WebSocket Server (blocking)
             self.running = True
             logger.info("\n" + "="*70)
             logger.info("🚀 SYSTEM READY - All services running")
@@ -184,6 +201,10 @@ class SurveillanceCarSystem:
         # Disconnect MQTT
         if self.mqtt_controller:
             self.mqtt_controller.disconnect()
+        
+        # Stop Custom MQTT Broker
+        if self.mqtt_broker:
+            await self.mqtt_broker.stop()
         
         logger.info("System shutdown complete")
 

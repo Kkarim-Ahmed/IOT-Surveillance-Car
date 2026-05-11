@@ -34,8 +34,6 @@ sudo apt-get install -y \
     python3-pip \
     python3-dev \
     python3-venv \
-    mosquitto \
-    mosquitto-clients \
     libportaudio2 \
     portaudio19-dev \
     libopencv-dev \
@@ -76,24 +74,8 @@ pip install -r requirements.txt
 
 echo ""
 
-# Configure Mosquitto
-echo "Step 6: Configuring Mosquitto MQTT broker..."
-sudo cp Raspi/MQTT/mosquitto.conf /etc/mosquitto/conf.d/surveillance_car.conf
-
-# Create log directory
-sudo mkdir -p /var/log/mosquitto
-sudo chown mosquitto:mosquitto /var/log/mosquitto
-
-# Enable and start Mosquitto
-sudo systemctl enable mosquitto
-sudo systemctl restart mosquitto
-
-echo "Mosquitto configured and started"
-
-echo ""
-
-# Configure Ngrok (if auth token provided)
-echo "Step 7: Configuring Ngrok..."
+# Install Ngrok
+echo "Step 4: Installing Ngrok..."
 if [ ! -z "$NGROK_AUTH_TOKEN" ]; then
     ngrok config add-authtoken $NGROK_AUTH_TOKEN
     echo "Ngrok auth token configured"
@@ -105,11 +87,11 @@ fi
 echo ""
 
 # Create systemd service (optional)
-echo "Step 8: Creating systemd service..."
+echo "Step 5: Creating systemd service..."
 cat > /tmp/surveillance-car.service << EOF
 [Unit]
 Description=Raspberry Pi Surveillance Car
-After=network.target mosquitto.service
+After=network.target
 
 [Service]
 Type=simple
@@ -134,18 +116,16 @@ echo "To start: sudo systemctl start surveillance-car"
 echo ""
 
 # Test installations
-echo "Step 9: Testing installations..."
+echo "Step 6: Testing installations..."
 echo -n "Python: "
 python --version
-echo -n "Mosquitto: "
-mosquitto -h | head -n 1
 echo -n "Ngrok: "
 ngrok version
 
 echo ""
 
 # Create run script
-echo "Step 10: Creating run script..."
+echo "Step 7: Creating run script..."
 cat > run.sh << 'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
@@ -166,15 +146,15 @@ echo "1. Configure Ngrok auth token (if not done):"
 echo "   export NGROK_AUTH_TOKEN=your_token_here"
 echo "   ngrok config add-authtoken \$NGROK_AUTH_TOKEN"
 echo ""
-echo "2. Test MQTT broker:"
-echo "   mosquitto_sub -h localhost -t 'dev/#' -v"
-echo ""
-echo "3. Start the system:"
+echo "2. Start the system:"
 echo "   ./run.sh"
 echo ""
-echo "4. Or use systemd service:"
+echo "3. Or use systemd service:"
 echo "   sudo systemctl start surveillance-car"
 echo ""
 echo "Configuration file: Raspi/Network/WebSockets/config.py"
 echo "Logs: journalctl -u surveillance-car -f"
+echo ""
+echo "NOTE: This system uses a CUSTOM MQTT BROKER (not Mosquitto)"
+echo "Your own MQTT broker implementation in: Raspi/MQTT/custom_mqtt_broker.py"
 echo ""

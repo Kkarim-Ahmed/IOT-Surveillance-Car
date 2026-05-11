@@ -15,13 +15,6 @@ fi
 # Activate virtual environment
 source venv/bin/activate
 
-# Check if Mosquitto is running
-if ! systemctl is-active --quiet mosquitto; then
-    echo "Warning: Mosquitto MQTT broker is not running"
-    echo "Starting Mosquitto..."
-    sudo systemctl start mosquitto
-fi
-
-# Start the system
-echo "Starting Raspberry Pi Surveillance Car..."
+# Start the system (includes custom MQTT broker)
+echo "Starting Raspberry Pi Surveillance Car with Custom MQTT Broker..."
 python -m Raspi.Network.WebSockets.main
